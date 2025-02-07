@@ -1,4 +1,6 @@
 const express = require('express');
+const { DefaultAzureCredential } = require('@azure/identity');
+const { SecretClient } = require('@azure/keyvault-secrets');
 const { CosmosClient } = require('@azure/cosmos');
 const Joi = require('joi'); // Used for validation
 const cors = require('cors');
@@ -7,11 +9,26 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
+// Fetch secrets from Azure Key Vault
+const keyVaultName = 'https://shishirtestkv.vault.azure.net/';
+const credential = new DefaultAzureCredential();
+const keyvaultclient = new SecretClient(keyVaultName, credential);
+
+async function getSecret(secretName) {
+    try {
+        const secret = await client.getSecret(secretName);
+        return secret.value;
+    } catch (error) {
+        console.error(`Error retrieving secret: ${error}`);
+        return null;
+    }
+}
+
 // 🔹 Replace with Azure Cosmos DB connection details (Use env variables)
-const COSMOS_DB_ENDPOINT = '';
-const COSMOS_DB_KEY = '';
-const DATABASE_ID = '';
-const CONTAINER_ID = '';
+const COSMOS_DB_ENDPOINT = await getSecret('cosmos-db-endpoint');
+const COSMOS_DB_KEY = await getSecret('cosmos-db-key');
+const DATABASE_ID = await getSecret('database-id');
+const CONTAINER_ID = await getSecret('container-id');
 
 // Initialize Cosmos DB client
 const client = new CosmosClient({ endpoint: COSMOS_DB_ENDPOINT, key: COSMOS_DB_KEY });
