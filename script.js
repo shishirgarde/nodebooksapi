@@ -1,82 +1,128 @@
 const express = require('express');
-const Joi = require('joi'); //used for validation
+const { CosmosClient } = require('@azure/cosmos');
+const Joi = require('joi'); // Used for validation
+const cors = require('cors');
 const app = express();
+
 app.use(express.json());
- 
-const books = [
-{title: 'Harry Potter', id: 1},
-{title: 'Twilight', id: 2},
-{title: 'The Memory Man', id: 3}
-]
- 
-//READ Request Handlers
+app.use(cors());
+
+// 🔹 Replace with Azure Cosmos DB connection details (Use env variables)
+const COSMOS_DB_ENDPOINT = '';
+const COSMOS_DB_KEY = '';
+const DATABASE_ID = '';
+const CONTAINER_ID = '';
+
+// Initialize Cosmos DB client
+const client = new CosmosClient({ endpoint: COSMOS_DB_ENDPOINT, key: COSMOS_DB_KEY });
+const database = client.database(DATABASE_ID);
+const container = database.container(CONTAINER_ID);
+
+// READ: Welcome Message
 app.get('/', (req, res) => {
-res.send('Welcome to Sample REST API with Node.js App!!');
+    res.send('Welcome to the Books API powered by Azure Cosmos DB!');
 });
- 
-app.get('/api/books', (req,res)=> {
-res.send(books);
-});
- 
-app.get('/api/books/:id', (req, res) => {
-const book = books.find(c => c.id === parseInt(req.params.id));
- 
-if (!book) res.status(404).send('<h2 style="font-family: Malgun Gothic; color: darkred;">Ooops... Cant find what you are looking for!</h2>');
-res.send(book);
-});
- 
-//CREATE Request Handler
-app.post('/api/books', (req, res)=> {
 
-const { error } = validateBook(req.body);
-if (error){
-res.status(400).send(error.details[0].message)
-return;
-}
-const book = {
-id: books.length + 1,
-title: req.body.title
-};
-books.push(book);
-res.send(book);
+// READ: Get all books
+app.get('/api/books', async (req, res) => {
+    try {
+        const { resources: books } = await container.items.readAll().fetchAll();
+        res.send(books);
+    } catch (err) {
+        res.status(500).send(err.message);
+    }
 });
- 
-//UPDATE Request Handler
-app.put('/api/books/:id', (req, res) => {
-const book = books.find(c=> c.id === parseInt(req.params.id));
-if (!book) res.status(404).send('<h2 style="font-family: Malgun Gothic; color: darkred;">Not Found!! </h2>');
- 
-const { error } = validateBook(req.body);
-if (error){
-res.status(400).send(error.details[0].message);
-return;
-}
- 
-book.title = req.body.title;
-res.send(book);
+
+// READ: Get a book by ID
+app.get('/api/books/:id', async (req, res) => {
+    try {
+        const { resource: book } = await container.item(req.params.id, req.params.id).read();
+        if (!book) {
+            return res.status(404).send('Book not found');
+        }
+        res.send(book);
+    } catch (err) {
+        res.status(500).send(err.message);
+    }
 });
- 
-//DELETE Request Handler
-app.delete('/api/books/:id', (req, res) => {
- 
-const book = books.find( c=> c.id === parseInt(req.params.id));
-if(!book) res.status(404).send('<h2 style="font-family: Malgun Gothic; color: darkred;"> Not Found!! </h2>');
- 
-const index = books.indexOf(book);
-books.splice(index,1);
- 
-res.send(book);
+
+// CREATE: Add a new book
+app.post('/api/books', async (req, res) => {
+    const { error } = validateBook(req.body);
+    if (error) return res.status(400).send(error.details[0].message);
+
+    const book = {
+        id: `${Date.now()}`, // Unique ID
+        title: req.body.title
+    };
+
+    try {
+        await container.items.create(book);
+        res.send(book);
+    } catch (err) {
+        res.status(500).send(err.message);
+    }
 });
- 
+
+// UPDATE: Update a book
+app.put('/api/books/:id', async (req, res) => {
+    const { error } = validateBook(req.body);
+    if (error) return res.status(400).send(error.details[0].message);
+
+    try {
+        const { resource: book } = await container.item(req.params.id, req.params.id).read();
+        if (!book) return res.status(404).send('Book not found');
+
+        book.title = req.body.title;
+        await container.item(req.params.id, req.params.id).replace(book);
+
+        res.send(book);
+    } catch (err) {
+        res.status(500).send(err.message);
+    }
+});
+
+// DELETE: Remove a book
+app.delete('/api/books/:id', async (req, res) => {
+    try {
+        const { resource: book } = await container.item(req.params.id, req.params.id).read();
+        if (!book) return res.status(404).send('Book not found');
+
+        await container.item(req.params.id, req.params.id).delete();
+        res.send(book);
+    } catch (err) {
+        res.status(500).send(err.message);
+    }
+});
+
+// READ: Get a book by title
+app.get('/api/books/title/:title', async (req, res) => {
+    try {
+        const querySpec = {
+            query: "SELECT * FROM c WHERE c.title = @title",
+            parameters: [{ name: "@title", value: req.params.title }]
+        };
+
+        const { resources: books } = await container.items.query(querySpec).fetchAll();
+        
+        if (books.length === 0) {
+            return res.status(404).send('Book not found');
+        }
+
+        res.send(books[0]); // Return the first matching book
+    } catch (err) {
+        res.status(500).send(err.message);
+    }
+});
+
+// Validate book input
 function validateBook(book) {
-
     const schema = Joi.object({
-    title: Joi.string().min(3).required()
+        title: Joi.string().min(3).required()
     });
     return schema.validate(book);
- 
 }
- 
-//PORT ENVIRONMENT VARIABLE
+
+// Start server
 const port = process.env.PORT || 8080;
-app.listen(port, () => console.log(`Listening on port ${port}..`));
+app.listen(port, () => console.log(`Listening on port ${port}...`));
